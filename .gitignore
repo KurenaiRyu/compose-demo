@@ -1,0 +1,13 @@
+# IntelliJ project files
+.idea
+*.iml
+out
+gen
+
+local.properties
+
+# Project exclude paths
+/.gradle/
+/build/
+/build/classes/kotlin/main/
+/build/classes/kotlin/test/
