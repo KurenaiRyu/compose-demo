@@ -1,12 +1,14 @@
 package io.github.kurenairyu.comic
 
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asComposeImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import com.sksamuel.aedile.core.caffeineBuilder
-import io.github.kurenairyu.comic.CacheEntity.Companion.cacheOf
+import io.github.kurenairyu.comic.Utils.ZIP_EXTENSIONS
+import io.github.kurenairyu.comic.Utils.imageFileNames
+import io.github.kurenairyu.comic.Utils.resizeImageToMaxHeight
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
-import moe.kurenai.bgm.util.getLogger
 import net.lingala.zip4j.ZipFile
 import org.jetbrains.skia.*
 import java.nio.file.Files
@@ -16,6 +18,7 @@ import kotlin.io.path.name
 import kotlin.io.path.pathString
 import kotlin.system.measureTimeMillis
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.measureTimedValue
 
 /**
  * @author Kurenai
@@ -23,26 +26,32 @@ import kotlin.time.Duration.Companion.minutes
  */
 
 object ComicManager {
-
-    private val IMAGE_EXTENSIONS = listOf(".jpg", ".jpeg", ".png", ".webp")
-    private val ZIP_EXTENSIONS = listOf(".zip", ".cbz")
     private const val COVER_WIDTH = 450
     private const val COVER_HEIGHT = 600
 
-    private val log = getLogger()
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val comicWorker = Dispatchers.IO.limitedParallelism(4) + CoroutineName("ReadingComicWorker")
+
     private val coverCache = caffeineBuilder<String, CacheEntity> {
-        maximumSize = 1000
+        maximumSize = 10
         expireAfterWrite = 20.minutes
         expireAfterAccess = 20.minutes
     }.build()
-    private val rollingCache = caffeineBuilder<String, Int> {
-        maximumSize = 1000
-        expireAfterWrite = 20.minutes.apply {  }
-        expireAfterAccess = 20.minutes
-    }.build()
 
+    val status = MutableStateFlow(Status.LISTING)
     private val _currentPath = MutableStateFlow(Path.of("Y:\\Comic\\(一般コミック) [あだちとか] ノラガミ"))
     val currentPath = _currentPath.asStateFlow()
+
+    private val _currentComic = MutableStateFlow<Path>(Path.of(""))
+    val currentComic = _currentComic.asStateFlow()
+
+    var zipFileFlow: MutableStateFlow<ZipFile?> = MutableStateFlow(null)
+    var pageFlow: StateFlow<List<String>> = zipFileFlow.map {
+        it?.imageFileNames()?: emptyList()
+    }.stateIn(CoroutineScope(this.comicWorker), SharingStarted.Eagerly, emptyList())
+
+    val currentPageNum = MutableStateFlow(0)
+    val showPages = 2
 
     private val _searchKeyword = MutableStateFlow("")
     val searchKeyword = _searchKeyword.asStateFlow()
@@ -50,15 +59,14 @@ object ComicManager {
     private val _paths = pathsFlow()
     val paths = pathsFilterFlow()
 
-    @OptIn(ExperimentalCoroutinesApi::class)
-    private val readingComicWorker = Dispatchers.IO.limitedParallelism(2) + CoroutineName("ReadingComicWorker")
-
     private fun pathsFlow(): StateFlow<List<Path>> {
         return _currentPath
             .onEach { log.info("Read path $it") }
             .map { path ->
                 kotlin.runCatching {
-                    Files.list(path).filter { it.isDirectory() || ZIP_EXTENSIONS.any { ext -> it.name.endsWith(ext, true) } }.toList()
+                    Files.list(path)
+                        .filter { it.isDirectory() || ZIP_EXTENSIONS.any { ext -> it.name.endsWith(ext, true) } }
+                        .toList()
                 }.getOrDefault(emptyList())
             }.stateIn(CoroutineScope(Dispatchers.IO), SharingStarted.WhileSubscribed(5000), emptyList())
     }
@@ -83,89 +91,86 @@ object ComicManager {
     }
 
     fun changeCurrentPath(path: Path) {
-        _currentPath.getAndUpdate { path }
+        _currentPath.update { path }
         changeSearchKeyword("")
+        coverCache.invalidateAll()
     }
 
-    @Suppress("UNCHECKED_CAST")
-    fun getCover(path: Path): StateFlow<ImageBitmap?> {
-        return flow {
-            if (path.isDirectory()) emit(null) else {
-                val id = path.pathString
-                var entity = coverCache.getIfPresent(id)
-                if (entity != null) emit((entity as? DataCacheEntity<ImageBitmap>)?.data) else {
-                    measureTimeMillis {
-                        entity = coverCache.get(id) {
-                            kotlin.runCatching {
-                                withContext(readingComicWorker) {
-                                    ZipFile(id).use { zipFile ->
-                                        val fileNames = zipFile.fileNames()
-                                        val coverList = listOf(fileNames.find { it.contains("cover", true) }) + fileNames.sorted().subList(0, 2.coerceAtMost(fileNames.size))
-                                        coverList.filterNotNull().forEach {
-                                            zipFile.getBitmap(it)?.let { return@withContext cacheOf(it) }
-                                        }
-                                        NothingCacheEntity
-                                    }
-                                }
-                            }.onFailure {
-                                log.error("Read $id fail", it)
-                            }.getOrDefault(NothingCacheEntity)
-                        }
-                        val bitmap = when (entity) {
-                            is DataCacheEntity<*> -> (entity as DataCacheEntity<*>).data as? ImageBitmap
-                            NothingCacheEntity -> null
-                            else -> null
-                        }
-                        emit(bitmap)
-                    }.also { log.info("Read $id in $it ms") }
-                }
-            }
-        }.stateIn(
-            CoroutineScope(Dispatchers.IO),
-            SharingStarted.Eagerly,
-            null
-        )
+    fun openComic(path: Path) {
+        if (_currentComic.value != path) {
+            currentPageNum.update { 0 }
+            zipFileFlow.getAndUpdate { ZipFile(path.pathString) }?.close()
+            _currentComic.update { path }
+        }
+        status.update { Status.READING }
     }
 
-    private fun ZipFile.fileNames(): List<String> {
-        return this.fileHeaders
-            .asSequence()
-            .filter {
-                !it.isDirectory &&
-                        IMAGE_EXTENSIONS.any { ext -> it.fileName.endsWith(ext, true) }
-            }.map { it.fileName }
-            .toList()
+    fun closeComic() {
+        status.update { Status.LISTING }
     }
 
-    private fun ZipFile.getBitmap(name: String): ImageBitmap? = kotlin.runCatching {
+    suspend fun getCover(path: Path, maxHeight: Int): ImageBitmap? = withContext(this.comicWorker) {
+        ZipFile(path.pathString).use { zipFile ->
+            val fileNames = zipFile.imageFileNames()
+            fileNames.firstOrNull()
+                ?.let { zipFile.getBitmap(it, maxHeight) }
+        }
+    }
+
+    fun ZipFile.getBitmap(name: String, maxHeight: Int = -1): ImageBitmap? = kotlin.runCatching {
         var result: ImageBitmap?
+        val fullPath = "${this.file.absolutePath}/$name"
         measureTimeMillis {
-            result = this.getFileHeader(name)?.let { this.getInputStream(it).use { Image.makeFromEncoded(it.readAllBytes()) } }?.let { image ->
-                val scale = if (image.width > image.height) {
-                    image.width / COVER_WIDTH
-                } else {
-                    image.height / COVER_HEIGHT
-                }.coerceAtLeast(1)
-                scaleUsingSurface(image, image.width / scale, image.height / scale).toComposeImageBitmap()
-            }
-            if (result == null) log.warn("Read $name bitmap is null")
-        }.also { log.info("Read bitmap of $name in $it ms") }
+                result = this.getFileHeader(name)
+                    ?.let { this.getInputStream(it).use { Image.makeFromEncoded(it.readAllBytes()) } }
+                    ?.let {
+                        if (maxHeight > 0) resizeImageToMaxHeight(it, maxHeight).asComposeImageBitmap()
+                        else it.toComposeImageBitmap()
+                    }
+                if (result == null) log.warn("Read $fullPath bitmap is null")
+        }.also { log.info("Read bitmap of $fullPath in $it ms") }
         result
     }.getOrNull()
 
-    private fun scaleUsingSurface(image: Image, width: Int, height: Int) = Surface.makeRasterN32Premul(width, height).use { surface ->
-        val canvas = surface.canvas
-        canvas.drawImageRect(
-            image,
-            Rect.makeWH(image.width.toFloat(), image.height.toFloat()),
-            Rect.makeWH(width.toFloat(), height.toFloat()),
-            SamplingMode.LINEAR,
-            null,
-            true
-        )
-        surface.makeImageSnapshot()
+    fun ZipFile.getMergedBitmap(list: List<String>, maxHeight: Int): ImageBitmap? = kotlin.runCatching {
+        val fullPath = "${this.file.absolutePath}/${list.joinToString()}"
+        val (result, duration) = measureTimedValue {
+            val images = list.reversed().mapNotNull { name ->
+                this.getFileHeader(name)
+                    ?.let { this.getInputStream(it).use { Image.makeFromEncoded(it.readAllBytes()) } }
+            }
+            Utils.mergeImages(images, maxHeight).asComposeImageBitmap()
+        }
+        log.info("Read bitmap of $fullPath in ${duration.inWholeMilliseconds} ms")
+        result
+    }.getOrNull()
+
+    fun nextPage() = currentPageNum.update {
+        log.info("NextPage")
+        (it + showPages).coerceAtMost(pageFlow.value.lastIndex)
+    }
+
+    fun prevPage() = currentPageNum.update {
+        log.info("PrevPage")
+        (it - showPages).coerceAtLeast(0)
+    }
+
+    fun nextStep() = currentPageNum.update {
+        log.info("NextStep")
+        (it + 1).coerceAtMost(pageFlow.value.lastIndex)
+    }
+
+    fun prevStep() = currentPageNum.update {
+        log.info("PrevStep")
+        (it - 1).coerceAtLeast(0)
+    }
+
+
+    enum class Status {
+        LISTING, READING
     }
 }
+
 
 sealed interface CacheEntity {
     companion object {
@@ -177,4 +182,4 @@ data class DataCacheEntity<T>(
     val data: T
 ) : CacheEntity
 
-object NothingCacheEntity : CacheEntity
+data object NothingCacheEntity : CacheEntity
