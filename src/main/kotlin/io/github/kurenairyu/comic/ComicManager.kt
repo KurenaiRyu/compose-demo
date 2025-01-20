@@ -3,6 +3,7 @@ package io.github.kurenairyu.comic
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asComposeImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
+import androidx.compose.ui.res.loadImageBitmap
 import com.sksamuel.aedile.core.caffeineBuilder
 import io.github.kurenairyu.comic.Utils.ZIP_EXTENSIONS
 import io.github.kurenairyu.comic.Utils.imageFileNames
@@ -122,24 +123,27 @@ object ComicManager {
         val fullPath = "${this.file.absolutePath}/$name"
         measureTimeMillis {
                 result = this.getFileHeader(name)
-                    ?.let { this.getInputStream(it).use { Image.makeFromEncoded(it.readAllBytes()) } }
+                    ?.let { this.getInputStream(it).use {
+                        Image.makeFromEncoded(it.readAllBytes()) }
+                    }
                     ?.let {
                         if (maxHeight > 0) resizeImageToMaxHeight(it, maxHeight).asComposeImageBitmap()
                         else it.toComposeImageBitmap()
                     }
                 if (result == null) log.warn("Read $fullPath bitmap is null")
         }.also { log.info("Read bitmap of $fullPath in $it ms") }
+        result?.prepareToDraw()
         result
     }.getOrNull()
 
-    fun ZipFile.getMergedBitmap(list: List<String>, maxHeight: Int): ImageBitmap? = kotlin.runCatching {
+    fun ZipFile.getMergedBitmap(list: List<String>, maxHeight: Int): Bitmap? = kotlin.runCatching {
         val fullPath = "${this.file.absolutePath}/${list.joinToString()}"
         val (result, duration) = measureTimedValue {
             val images = list.reversed().mapNotNull { name ->
                 this.getFileHeader(name)
                     ?.let { this.getInputStream(it).use { Image.makeFromEncoded(it.readAllBytes()) } }
             }
-            Utils.mergeImages(images, maxHeight).asComposeImageBitmap()
+            Utils.mergeImages(images, maxHeight)
         }
         log.info("Read bitmap of $fullPath in ${duration.inWholeMilliseconds} ms")
         result

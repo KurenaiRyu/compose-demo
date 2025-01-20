@@ -16,6 +16,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asComposeImageBitmap
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.onSizeChanged
 import io.github.kurenairyu.comic.ComicManager.currentPageNum
@@ -23,8 +24,12 @@ import io.github.kurenairyu.comic.ComicManager.getBitmap
 import io.github.kurenairyu.comic.ComicManager.getMergedBitmap
 import io.github.kurenairyu.comic.ComicManager.pageFlow
 import io.github.kurenairyu.comic.ComicManager.zipFileFlow
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import net.lingala.zip4j.ZipFile
 import java.nio.file.Path
+import kotlin.math.max
 
 @Composable
 fun ReadingScreen() {
@@ -97,8 +102,15 @@ private fun RowScope.ComicPage(
 ) {
 
     val first = pageNum.coerceIn(0..< pages.lastIndex)
-    val image by produceState<ImageBitmap?>(null, pageNum, maxHeight) {
-        value = zipFile?.getMergedBitmap(listOf(pages[first], pages[first+1]), maxHeight)
+
+    var image: ImageBitmap? by remember { mutableStateOf(null) }
+
+    LaunchedEffect(pageNum) {
+        CoroutineScope(Dispatchers.IO).launch {
+            val bitmap = zipFile?.getMergedBitmap(listOf(pages[first], pages[first+1]), maxHeight)?.asComposeImageBitmap()
+            bitmap?.prepareToDraw()
+            image = bitmap
+        }
     }
 
     if (image == null) {
