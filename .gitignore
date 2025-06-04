@@ -1,5 +1,6 @@
 # IntelliJ project files
 .idea
+.kotlin
 *.iml
 out
 gen
@@ -11,3 +12,4 @@ local.properties
 /build/
 /build/classes/kotlin/main/
 /build/classes/kotlin/test/
+/logs

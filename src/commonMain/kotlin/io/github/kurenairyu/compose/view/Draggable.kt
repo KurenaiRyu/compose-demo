@@ -4,10 +4,10 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.material.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.ui.input.pointer.consumePositionChange
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.consumePositionChange
+import androidx.compose.ui.input.pointer.pointerInput
 import io.github.kurenairyu.compose.Transparent
 import io.github.kurenairyu.compose.core.EventLocker
 

@@ -29,7 +29,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import net.lingala.zip4j.ZipFile
 import java.nio.file.Path
-import kotlin.math.max
 
 @Composable
 fun ReadingScreen() {

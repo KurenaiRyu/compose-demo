@@ -8,8 +8,6 @@ import androidx.compose.ui.window.*
 import io.github.kurenairyu.compose.util.getPreferredWindowSize
 import io.github.kurenairyu.getLogger
 import navcontroller.NavController
-import kotlin.io.path.isDirectory
-import kotlin.io.path.name
 
 /**
  * @author Kurenai

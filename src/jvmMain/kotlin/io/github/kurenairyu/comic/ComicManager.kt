@@ -3,7 +3,6 @@ package io.github.kurenairyu.comic
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asComposeImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
-import androidx.compose.ui.res.loadImageBitmap
 import com.sksamuel.aedile.core.caffeineBuilder
 import io.github.kurenairyu.comic.Utils.ZIP_EXTENSIONS
 import io.github.kurenairyu.comic.Utils.imageFileNames
@@ -11,7 +10,8 @@ import io.github.kurenairyu.comic.Utils.resizeImageToMaxHeight
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import net.lingala.zip4j.ZipFile
-import org.jetbrains.skia.*
+import org.jetbrains.skia.Bitmap
+import org.jetbrains.skia.Image
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.isDirectory
@@ -49,7 +49,7 @@ object ComicManager {
     var zipFileFlow: MutableStateFlow<ZipFile?> = MutableStateFlow(null)
     var pageFlow: StateFlow<List<String>> = zipFileFlow.map {
         it?.imageFileNames()?: emptyList()
-    }.stateIn(CoroutineScope(this.comicWorker), SharingStarted.Eagerly, emptyList())
+    }.stateIn(CoroutineScope(comicWorker), SharingStarted.Eagerly, emptyList())
 
     val currentPageNum = MutableStateFlow(0)
     val showPages = 2
@@ -110,7 +110,7 @@ object ComicManager {
         status.update { Status.LISTING }
     }
 
-    suspend fun getCover(path: Path, maxHeight: Int): ImageBitmap? = withContext(this.comicWorker) {
+    suspend fun getCover(path: Path, maxHeight: Int): ImageBitmap? = withContext(comicWorker) {
         ZipFile(path.pathString).use { zipFile ->
             val fileNames = zipFile.imageFileNames()
             fileNames.firstOrNull()

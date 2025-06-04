@@ -1,7 +1,10 @@
 package io.github.kurenairyu.comic
 
 import net.lingala.zip4j.ZipFile
-import org.jetbrains.skia.*
+import org.jetbrains.skia.Bitmap
+import org.jetbrains.skia.Canvas
+import org.jetbrains.skia.Image
+import org.jetbrains.skia.Paint
 
 object Utils {
     val IMAGE_EXTENSIONS = listOf(".jpg", ".jpeg", ".png", ".webp")
